@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+import argparse
+import crypt
+import json
+import os
+import sys
+
+
+def find_stage(stages, name):
+    """Find a stage with 'name' in 'data'"""
+    matches = [(i, stage['name']) for i, stage in enumerate(stages) if stage['name'] == name]
+    return -1, None if len(matches) != 1 else matches[0]
+
+def create_stage(stages, name, after=None):
+    """Create a new stage """
+    pos = len(stages)
+    if after is not None:
+        pos, _ = find_stage(stages, after)
+
+    stages.insert(pos, {'name': name, 'options': {}})
+    return stages[pos-1]
+
+def users_set_user(stage, name, data):
+    """Set a user with name to data in stage"""
+    options = stage['options']
+    if 'users' not in options:
+        options['users'] = {}
+    users = options['users']
+    users[name] = data
+
+def create_user(stage, name, uid=None, password=None):
+    """ Create a new user in the org.osbuild.users stage
+        uid
+        gid
+        groups
+        description
+        home
+        shell
+        password
+        key
+    """
+    data = {}
+    if password is not None:
+        data['password'] = crypt.crypt(password)
+    if uid is not None:
+        data['uid'] = uid
+
+    options = stage['options']
+    if 'users' not in options:
+        options['users'] = {}
+    users = options['users']
+    users[name] = data
+
+def create_user_current(stage, password=None):
+    import pwd
+    entry = pwd.getpwuid(os.getuid())
+    name = entry.pw_name
+    home = entry.pw_dir
+    data = {
+        'uid': entry.pw_uid,
+        'home': home
+    }
+    if password is not None:
+        data['password'] = crypt.crypt(password)
+    try:
+        with open(os.path.join(home, '.ssh', 'id_rsa.pub')) as fd:
+            sshkey = fd.read()
+            data['key'] = sshkey
+    except:
+        pass
+
+    users_set_user(stage, name, data)
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(description='OSBuild JSON Editor')
+    parser.add_argument('FILE', type=argparse.FileType('r'))
+
+    args = parser.parse_args()
+
+    data = json.load(args.FILE)
+    stages = data['stages']
+
+    for stage in data['stages']:
+        print(stage['name'], file=sys.stderr)
+
+    _, users = find_stage(data['stages'], "org.osbuild.users")
+    if users is None:
+        print("users not found, creating", file=sys.stderr)
+        users = create_stage(stages, "org.osbuild.users", after="org.osbuild.selinux")
+
+    create_user(users, "root", uid=0, password="foobar")
+    create_user_current(users, password="foobar")
+
+    sys.stdout.write(json.dumps(data, indent=2))
+
+
+if __name__ == '__main__':
+    main()
